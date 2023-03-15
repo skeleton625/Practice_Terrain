@@ -1,10 +1,13 @@
 using System;
 using System.Collections;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.Experimental.TerrainAPI;
 
 public class TerrainModifier : MonoBehaviour
 {
+    enum ModifierType { None = 0, DefaultModify = 1, BrushModify = 2, }
+
     #region Terrain Modifier Terrain Setting SerializeField
     [Header("Terrain Setting"), Space(10)]
     [SerializeField] private Terrain MainTerrain = null;
@@ -46,7 +49,15 @@ public class TerrainModifier : MonoBehaviour
         }
     }
 
-    public string ActiveType { get; private set; }
+    private ModifierType activeType;
+    public string GetActiveType()
+        => activeType switch
+        {
+            ModifierType.None => "None",
+            ModifierType.DefaultModify => "Default Modifying",
+            ModifierType.BrushModify => "Brush Modifying",
+            _ => "ERROR"
+        };
     #endregion
 
     #region Transform Modifier Grid Visual Setting SerializeField
@@ -62,33 +73,80 @@ public class TerrainModifier : MonoBehaviour
 
     private bool isActive = false;
     private bool isRotate = false;
+    private bool mixBrush = false;
     private byte generateType = 0;
 
     private Vector3 landSpaceOffset = default;
     private Quaternion landSpace = default;
 
     private Camera mainCamera = null;
+
+    public bool MixBrush
+    {
+        get => mixBrush;
+        set => mixBrush = value;
+    }
     #endregion
 
     #region Transform Modifier Brush Setting SerializeField
     [Header("Brush Setting"), Space(10)]
     [SerializeField] private Texture2D[] BrushArray = null;
-    [SerializeField] private int BrushWidth = 10;
-    [SerializeField] private int BrushHeight = 10;
+    [SerializeField] private Vector2Int BrushWidthLimit = Vector2Int.zero;
+    [SerializeField] private Vector2Int BrushHeightLimit = Vector2Int.zero;
+    [SerializeField] private int DefaultBrushWidth = 10;
+    [SerializeField] private int DefaultBrushHeight = 10;
+
+    private int preBrushIndex = 0;
+    private int brushWidth = 0;
+    private int brushHeight = 0;
 
     private Texture2D preBrush = null;
     private Texture2D preRotBrush = null;
+
+    public int PreBrushIndex
+    {
+        get => preBrushIndex;
+        set
+        {
+            preBrushIndex = Mathf.Clamp(value, 0, BrushArray.Length);
+            ResizeBrush();
+        }
+    }
+
+    public int BrushWidth
+    {
+        get => brushWidth;
+        set
+        {
+            brushWidth = Mathf.Clamp(value, BrushWidthLimit.x, BrushWidthLimit.y);
+            ResizeBrush();
+        }
+    }
+
+    public int BrushHeight
+    {
+        get => brushHeight;
+        set
+        {
+            brushHeight = Mathf.Clamp(value, BrushHeightLimit.x, BrushHeightLimit.y);
+            ResizeBrush();
+        }
+    }
     #endregion
 
     #region Terrain Modifier Initialize Functions
     public void InitializeModifier()
     {
         mainCamera = Camera.main;
+
         ModifierScaleX = DefaultScaleLimit;
         ModifierScaleZ = DefaultScaleLimit;
-        ActiveType = "None";
+        brushWidth = DefaultBrushWidth;
+        brushHeight = DefaultBrushHeight;
 
         isActive = false;
+        activeType = ModifierType.None;
+
         InitializeGrid();
     }
 
@@ -175,13 +233,13 @@ public class TerrainModifier : MonoBehaviour
     #endregion
 
     #region Terrain Modifier Functions
-    public bool ModifyTerrainBlock(Action initAction)
+    public bool StartDefaultModifying(Action activeUIAction)
     {
         if (!isActive)
         {
             isActive = true;
-            ActiveType = "Modify Terrain Block";
-            StartCoroutine(ModifyTerrainCoroutine(initAction));
+            activeType = ModifierType.DefaultModify;
+            StartCoroutine(DefaultModifyingCoroutine(activeUIAction));
             return true;
         }
         return false;
@@ -226,9 +284,9 @@ public class TerrainModifier : MonoBehaviour
         this.isRotate = isRotate;
     }
 
-    private IEnumerator ModifyTerrainCoroutine(Action initAction)
+    private IEnumerator DefaultModifyingCoroutine(Action activeUIAction)
     {
-        initAction.Invoke();
+        activeUIAction.Invoke();
 
         Vector3 nextPosition = Vector3.zero;
         Vector3 startPosition = Vector3.zero;
@@ -238,11 +296,14 @@ public class TerrainModifier : MonoBehaviour
         int layer = -1 + 32;
         while (isActive)
         {
+            yield return null;
+
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                isActive = false;
                 InitializeGrid();
-                ActiveType = "None";
-                initAction.Invoke();
+                activeType = ModifierType.None;
+                activeUIAction.Invoke();
                 break;
             }
 
@@ -260,6 +321,9 @@ public class TerrainModifier : MonoBehaviour
 
                     if (Input.GetMouseButtonDown(0))
                     {
+                        if (EventSystem.current.IsPointerOverGameObject())
+                            continue;
+
                         GridBody.localPosition = new Vector3(-1, 0, -1);
                         GridVisual.localPosition = new Vector3(.5f, 0, .5f);
                         GridBoundary.localPosition = new Vector3(.5f, 0, .5f);
@@ -304,47 +368,57 @@ public class TerrainModifier : MonoBehaviour
                             int intSX = Mathf.RoundToInt(floatSX), intSZ = Mathf.RoundToInt(floatSZ);
                             int intEX = Mathf.RoundToInt(floatEX), intEZ = Mathf.RoundToInt(floatEZ);
 
-                            SetRotateTerrainHeights(intSX - 1, intSZ - 1, intEX, intEZ, HeightScale);
-
-                            /*
-                            int sx = Mathf.RoundToInt(startPosition.x + (gridRotation.z.Equals(180) ? -gridScale.x + .5f : -1.5f));
-                            int sz = Mathf.RoundToInt(startPosition.z + (gridRotation.x.Equals(180) ? -gridScale.z + .5f : -1.5f));
-                            int scaleX = gridScale.x / 2;
-                            int scaleZ = gridScale.z / 2;
-                            for (int x = 0; x < scaleX; ++x)
+                            if (mixBrush)
                             {
-                                for (int z = 0; z < scaleZ; ++z)
+                                preBrush = ResizeBrush(1, 2, 2);
+                                int sx = Mathf.RoundToInt(startPosition.x + (gridRotation.z.Equals(180) ? -gridScale.x + .5f : -1.5f));
+                                int sz = Mathf.RoundToInt(startPosition.z + (gridRotation.x.Equals(180) ? -gridScale.z + .5f : -1.5f));
+                                int scaleX = gridScale.x / 2;
+                                int scaleZ = gridScale.z / 2;
+                                for (int x = 0; x < scaleX; ++x)
                                 {
-                                    Vector3 position = Quaternion.Euler(0, 45, 0) * new Vector3(sx + 2 * x + 1, 100, sz + 2 * z + 1);
-                                    if (Physics.Raycast(position, Vector3.down, out hit, 1000, layer))
+                                    for (int z = 0; z < scaleZ; ++z)
                                     {
-                                        GameObject clone = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                                        clone.transform.position = hit.point;
-                                        PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), preRotBrush);
+                                        Vector3 position = Quaternion.Euler(0, 45, 0) * new Vector3(sx + 2 * x + 1, 100, sz + 2 * z + 1);
+                                        if (Physics.Raycast(position, Vector3.down, out hit, 1000, layer))
+                                        {
+                                            PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), preRotBrush);
+                                        }
                                     }
                                 }
                             }
-                            */
+                            else
+                            {
+                                SetRotateTerrainHeights(intSX - 1, intSZ - 1, intEX, intEZ, HeightScale);
+                            }
                         }
                         else
                         {
-                            //SetDefaultTerrainHeights(sx, sz, gridScale.x + 1, gridScale.z + 1, HeightScale);
-
                             int sx = Mathf.RoundToInt(startPosition.x + (gridRotation.z.Equals(180) ? -gridScale.x + .5f : -1.5f));
                             int sz = Mathf.RoundToInt(startPosition.z + (gridRotation.x.Equals(180) ? -gridScale.z + .5f : -1.5f));
-                            int scaleX = gridScale.x / 2;
-                            int scaleZ = gridScale.z / 2;
-                            for (int x = 0; x < scaleX; ++x)
+
+                            if (mixBrush)
                             {
-                                for (int z = 0; z < scaleZ; ++z)
+                                preBrush = ResizeBrush(1, 2, 2);
+
+                                int scaleX = gridScale.x / 2;
+                                int scaleZ = gridScale.z / 2;
+                                for (int x = 0; x < scaleX; ++x)
                                 {
-                                    if (Physics.Raycast(new Vector3(sx + 2 * x + 1.5f, 100, sz + 2 * z + 1.5f), Vector3.down, out hit, 1000, layer))
+                                    for (int z = 0; z < scaleZ; ++z)
                                     {
-                                        GameObject clone = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                                        clone.transform.position = hit.point;
-                                        PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), preBrush);
+                                        if (Physics.Raycast(new Vector3(sx + 2 * x + 1.5f, 100, sz + 2 * z + 1.5f), Vector3.down, out hit, 1000, layer))
+                                        {
+                                            GameObject clone = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                                            clone.transform.position = hit.point;
+                                            PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), preBrush);
+                                        }
                                     }
                                 }
+                            }
+                            else
+                            {
+                                SetDefaultTerrainHeights(sx, sz, gridScale.x + 1, gridScale.z + 1, HeightScale);
                             }
                         }
 
@@ -353,13 +427,22 @@ public class TerrainModifier : MonoBehaviour
                     }
                     break;
             }
-            yield return null;
         }
 
     }
     #endregion
 
     #region Terrain Brush Functions
+    public void StartBrushModifying(Action activeUIAction)
+    {
+        if (!isActive)
+        {
+            isActive = true;
+            activeType = ModifierType.BrushModify;
+            StartCoroutine(BrushModifyingCoroutine(activeUIAction));
+        }
+    }
+
     private void PaintBrush(int cx, int cz, Texture2D brush)
     {
         int width = brush.width;
@@ -380,63 +463,68 @@ public class TerrainModifier : MonoBehaviour
         SetTerrainHeights(sx, sz, heights);
     }
 
-    private IEnumerator PaintBrush()
+    private IEnumerator BrushModifyingCoroutine(Action activeUIAction)
     {
-        bool isActive = true;
+        activeUIAction.Invoke();
+
         int layer = -1 + 32;
+        ResizeBrush();
 
-        int brushIndex = 1;
-        Texture2D brush = BrushArray[brushIndex];
-
-        while (isActive)
+        while (true)
         {
-            if (Input.GetMouseButtonDown(0))
+            yield return null;
+
+            if (Input.GetKeyDown(KeyCode.Escape))
             {
+                isActive = false;
+                activeType = ModifierType.None;
+                activeUIAction.Invoke();
+                break;
+            }
+            else if (Input.GetMouseButtonDown(0))
+            {
+                if (EventSystem.current.IsPointerOverGameObject())
+                    continue;
+
                 Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
                 if (Physics.Raycast(ray, out RaycastHit hit, 1000, layer))
                 {
                     int width = preBrush.width;
                     int height = preBrush.height;
-                    PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), brush);
-
-                    int sx = Mathf.RoundToInt(hit.point.x) - width / 2;
-                    int sz = Mathf.RoundToInt(hit.point.z) - height / 2;
-                    GameObject clone = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    clone.transform.position = new Vector3(Mathf.RoundToInt(hit.point.x) + 1, hit.point.y, Mathf.RoundToInt(hit.point.z) + 1);
-                    clone = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    clone.transform.position = new Vector3(sx + 1, hit.point.y, sz + 1);
-                    clone = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    clone.transform.position = new Vector3(sx + width, hit.point.y, sz + height);
+                    PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), preBrush);
                 }
             }
-            else if (Input.GetKeyDown(KeyCode.R))
-            {
-                brush = ResizeBrush(brushIndex);
-                Debug.Log("Resize Brush");
-            }
-            else if (Input.GetKeyDown(KeyCode.Escape))
-            {
-                isActive = false;
-            }
-
-            yield return null;
         }
     }
 
-    private Texture2D ResizeBrush(int index)
+    private Texture2D ResizeBrush(int index, int width = 0, int height = 0)
     {
+        if (width.Equals(0)) width = BrushWidth;
+        if (height.Equals(0)) height = BrushHeight;
+
         Texture2D defaultBrush = BrushArray[index];
         Texture2D newBrush = new Texture2D(BrushWidth, BrushHeight, defaultBrush.format, false);
         Color[] prePixels = defaultBrush.GetPixels(0);
 
-        float incX = (1f / BrushWidth);
-        float incY = (1f / BrushHeight);
+        float incX = (1f / width);
+        float incY = (1f / height);
         for (int pixel = 0; pixel < prePixels.Length; ++pixel)
             prePixels[pixel] = defaultBrush.GetPixelBilinear(incX * (pixel % BrushWidth), incY * (Mathf.Floor(pixel / BrushWidth)));
 
         newBrush.SetPixels(prePixels, 0);
         newBrush.Apply();
         return newBrush;
+    }
+
+    private void ResizeBrush()
+    {
+        switch (activeType)
+        {
+            case ModifierType.None:
+            case ModifierType.BrushModify:
+                preBrush = ResizeBrush(preBrushIndex);
+                break;
+        }
     }
     #endregion
 }

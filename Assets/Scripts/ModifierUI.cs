@@ -2,16 +2,25 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
+using UnityEngine.UI;
 
 public class ModifierUI : MonoBehaviour
 {
     [Header("Terrain Modifier Setting"), Space(10)]
     [SerializeField] private TerrainModifier Modifier = null;
-
-    [Header("Modifier UI Setting"), Space(10)]
     [SerializeField] private TextMeshProUGUI PreRunningCoroutine = null;
+
+    [Header("Default Modifier UI Setting"), Space(10)]
     [SerializeField] private TMP_InputField XscaleInputField = null;
     [SerializeField] private TMP_InputField ZscaleInputField = null;
+    [SerializeField] private Toggle MixBrushToggle = null;
+
+    [Header("Brush Modifier UI Setting"), Space(10)]
+    [SerializeField] private Image[] BrushBackgrounds = null;
+    [SerializeField] private Color SelectColor = default;
+    [SerializeField] private Color DefaultColor = default;
+    [SerializeField] private TMP_InputField BrushWidth = null;
+    [SerializeField] private TMP_InputField BrushHeight = null;
 
     private void Awake()
     {
@@ -21,9 +30,21 @@ public class ModifierUI : MonoBehaviour
 
         XscaleInputField.text = Modifier.ModifierScaleX.ToString();
         ZscaleInputField.text = Modifier.ModifierScaleZ.ToString();
+
+        BrushWidth.text = Modifier.BrushWidth.ToString();
+        BrushHeight.text = Modifier.BrushHeight.ToString();
+
+        for (int i = 0; i < BrushBackgrounds.Length; ++i)
+            BrushBackgrounds[i].color = DefaultColor;
+        BrushBackgrounds[Modifier.PreBrushIndex].color = SelectColor;
     }
 
-    public void ChangeModifierScale(bool isX)
+    public void StartDefaultModifier()
+    {
+        Modifier.StartDefaultModifying(RefreshRunningCoroutine);
+    }
+
+    public void ChangeDefaultModifyingScale(bool isX)
     {
         if (isX)
         {
@@ -37,13 +58,39 @@ public class ModifierUI : MonoBehaviour
         }
     }
 
-    public void StartModifyingTerrainBlock()
+    public void ChangeMixBrush()
     {
-        Modifier.ModifyTerrainBlock(RefreshRunningCoroutine);
+        Modifier.MixBrush = MixBrushToggle.isOn;
     }
 
-    public void RefreshRunningCoroutine()
+    public void StartImageModifier()
     {
-        PreRunningCoroutine.text = Modifier.ActiveType;
+        Modifier.StartBrushModifying(RefreshRunningCoroutine);
+    }
+
+    public void ChangeBrushImage(int index)
+    {
+        BrushBackgrounds[Modifier.PreBrushIndex].color = DefaultColor;
+        BrushBackgrounds[index].color = SelectColor;
+        Modifier.PreBrushIndex = index;
+    }
+
+    public void ChangeBrushSize(bool isWidth)
+    {
+        if (isWidth)
+        {
+            Modifier.BrushWidth = int.Parse(BrushWidth.text);
+            BrushWidth.text = Modifier.BrushWidth.ToString();
+        }
+        else
+        {
+            Modifier.BrushHeight = int.Parse(BrushHeight.text);
+            BrushHeight.text = Modifier.BrushHeight.ToString();
+        }
+    }
+
+    private void RefreshRunningCoroutine()
+    {
+        PreRunningCoroutine.text = Modifier.GetActiveType();
     }
 }
