@@ -154,14 +154,14 @@ public class TerrainModifier : MonoBehaviour
     {
         // X : WORLD SPACE Z, Z : WORLD SPACE X,
         // Because, terrain depth refers Terrain Texture
-        terrainDepths = new float[TerrainScale.x, TerrainScale.z];
+        terrainDepths = new float[TerrainScale.z, TerrainScale.x];
 
         float depth = DefaultTerrainHeight / TerrainScale.y;
         for (int z = 0; z < TerrainScale.z; ++z)
         {
             for (int x = 0; x < TerrainScale.x; ++x)
             {
-                terrainDepths[x, z] = depth;
+                terrainDepths[z, x] = depth;
             }
         }
 
@@ -354,6 +354,11 @@ public class TerrainModifier : MonoBehaviour
                     }
                     else
                     {
+                        int sx = Mathf.RoundToInt(startPosition.x + (gridRotation.z.Equals(180) ? -gridScale.x + 1 : 0));   // 0 : 沥规氢, 180 : 开规氢
+                        int sz = Mathf.RoundToInt(startPosition.z + (gridRotation.x.Equals(180) ? -gridScale.z + 1 : 0));   // 0 : 沥规氢, 180 : 开规氢
+                        int scaleX = gridScale.x / 2;
+                        int scaleZ = gridScale.z / 2;
+
                         if (isRotate)
                         {
                             float floatSX = float.MaxValue, floatSZ = float.MaxValue;
@@ -370,11 +375,9 @@ public class TerrainModifier : MonoBehaviour
 
                             if (mixBrush)
                             {
-                                preBrush = ResizeBrush(1, 2, 2);
-                                int sx = Mathf.RoundToInt(startPosition.x + (gridRotation.z.Equals(180) ? -gridScale.x + .5f : -1.5f));
-                                int sz = Mathf.RoundToInt(startPosition.z + (gridRotation.x.Equals(180) ? -gridScale.z + .5f : -1.5f));
-                                int scaleX = gridScale.x / 2;
-                                int scaleZ = gridScale.z / 2;
+                                preRotBrush = ResizeBrush(1, 2, 2);
+
+
                                 for (int x = 0; x < scaleX; ++x)
                                 {
                                     for (int z = 0; z < scaleZ; ++z)
@@ -394,23 +397,16 @@ public class TerrainModifier : MonoBehaviour
                         }
                         else
                         {
-                            int sx = Mathf.RoundToInt(startPosition.x + (gridRotation.z.Equals(180) ? -gridScale.x + .5f : -1.5f));
-                            int sz = Mathf.RoundToInt(startPosition.z + (gridRotation.x.Equals(180) ? -gridScale.z + .5f : -1.5f));
-
                             if (mixBrush)
                             {
-                                preBrush = ResizeBrush(1, 2, 2);
+                                preBrush = ResizeBrush(0, 4, 4);
 
-                                int scaleX = gridScale.x / 2;
-                                int scaleZ = gridScale.z / 2;
                                 for (int x = 0; x < scaleX; ++x)
                                 {
                                     for (int z = 0; z < scaleZ; ++z)
                                     {
-                                        if (Physics.Raycast(new Vector3(sx + 2 * x + 1.5f, 100, sz + 2 * z + 1.5f), Vector3.down, out hit, 1000, layer))
+                                        if (Physics.Raycast(new Vector3(sx + 2 * x + 3, 100, sz + 2 * z + 3), Vector3.down, out hit, 1000, layer))
                                         {
-                                            GameObject clone = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                                            clone.transform.position = hit.point;
                                             PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), preBrush);
                                         }
                                     }
@@ -418,7 +414,7 @@ public class TerrainModifier : MonoBehaviour
                             }
                             else
                             {
-                                SetDefaultTerrainHeights(sx, sz, gridScale.x + 1, gridScale.z + 1, HeightScale);
+                                SetDefaultTerrainHeights(sx - 1, sz - 1, gridScale.x + 1, gridScale.z + 1, HeightScale);
                             }
                         }
 
@@ -489,8 +485,6 @@ public class TerrainModifier : MonoBehaviour
                 Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
                 if (Physics.Raycast(ray, out RaycastHit hit, 1000, layer))
                 {
-                    int width = preBrush.width;
-                    int height = preBrush.height;
                     PaintBrush(Mathf.RoundToInt(hit.point.x), Mathf.RoundToInt(hit.point.z), preBrush);
                 }
             }
